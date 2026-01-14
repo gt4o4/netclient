@@ -206,14 +206,10 @@ func writeServiceConfig() error {
 		return err
 	}
 	if !fileExisted {
-		logger.Log(2, "wrote the daemon config file to the Netclient directory")
+		slog.Debug("wrote the daemon config file to the Netclient directory")
 	} else {
-		logger.Log(2, "updated the daemon config file with log preservation settings")
+		slog.Debug("updated the daemon config file with log preservation settings")
 	}
-	// Log where the log files are created
-	// WinSW creates log files based on the wrapper executable name (winsw.exe)
-	logger.Log(0, fmt.Sprintf("netclient logs will be written to: %swinsw.out.log (stdout) and %swinsw.err.log (stderr)", workingDir, workingDir))
-	logger.Log(0, "The service must be restarted for the new log configuration to take effect")
 	return nil
 }
 
