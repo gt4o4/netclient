@@ -117,7 +117,7 @@ func (nc *NCIface) ApplyAddrs() error {
 	if err != nil {
 		return err
 	}
-	routes, err := netlink.RouteList(l, 0)
+	routes, err := routeListAll(l)
 	if err != nil {
 		return err
 	}
@@ -213,7 +213,7 @@ func GetDefaultGatewayIp() (ip net.IP, err error) {
 	//build the gateway route, with Table ROUTE_TABLE_NAME, metric 1
 	tRoute := netlink.Route{Dst: nil, Table: RouteTableName}
 	//Check if table ROUTE_TABLE_NAME existed
-	routes, _ := netlink.RouteListFiltered(netlink.FAMILY_ALL, &tRoute, netlink.RT_FILTER_TABLE)
+	routes, _ := routeListFilteredAll(&tRoute, netlink.RT_FILTER_TABLE)
 	if len(routes) == 1 {
 		return routes[0].Gw, nil
 	} else if len(routes) > 1 {
@@ -273,7 +273,7 @@ func GetDefaultGatewayV6() (gwRoute netlink.Route, err error) {
 func GetDefaultGateway() (gwRoute netlink.Route, err error) {
 
 	//get the present route list
-	routes, err := netlink.RouteList(nil, netlink.FAMILY_ALL)
+	routes, err := routeListAll(nil)
 	if err != nil {
 		slog.Error("error loading route tables", "error", err.Error())
 		return gwRoute, err
@@ -709,6 +709,44 @@ func restoreInternetGwV4() (err error) {
 
 	config.Netclient().CurrGwNmIP = net.ParseIP("")
 	return config.WriteNetclientConfig()
+}
+
+// routeListAll returns routes for all address families.
+// Some kernels (notably Virtuozzo/OpenVZ 3.10.x) do not support RTM_GETROUTE
+// dump with AF_UNSPEC, returning EAFNOSUPPORT. In that case, query V4 and V6
+// separately and merge the results.
+func routeListAll(link netlink.Link) ([]netlink.Route, error) {
+	routes, err := netlink.RouteList(link, netlink.FAMILY_ALL)
+	if err == nil {
+		return routes, nil
+	}
+	if !errors.Is(err, unix.EAFNOSUPPORT) {
+		return nil, err
+	}
+	v4, err4 := netlink.RouteList(link, netlink.FAMILY_V4)
+	if err4 != nil {
+		return nil, err4
+	}
+	v6, _ := netlink.RouteList(link, netlink.FAMILY_V6)
+	return append(v4, v6...), nil
+}
+
+// routeListFilteredAll is like netlink.RouteListFiltered but falls back to
+// querying V4 and V6 separately when AF_UNSPEC is not supported.
+func routeListFilteredAll(filter *netlink.Route, filterMask uint64) ([]netlink.Route, error) {
+	routes, err := netlink.RouteListFiltered(netlink.FAMILY_ALL, filter, filterMask)
+	if err == nil {
+		return routes, nil
+	}
+	if !errors.Is(err, unix.EAFNOSUPPORT) {
+		return nil, err
+	}
+	v4, err4 := netlink.RouteListFiltered(netlink.FAMILY_V4, filter, filterMask)
+	if err4 != nil {
+		return nil, err4
+	}
+	v6, _ := netlink.RouteListFiltered(netlink.FAMILY_V6, filter, filterMask)
+	return append(v4, v6...), nil
 }
 
 // == private ==
