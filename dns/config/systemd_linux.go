@@ -137,7 +137,9 @@ type systemdUplinkManager struct {
 }
 
 func newSystemdUplinkManager(opts ...ManagerOption) (*systemdUplinkManager, error) {
-	s := &systemdUplinkManager{}
+	s := &systemdUplinkManager{
+		configs: make(map[string]Config),
+	}
 	var options ManagerOptions
 	for _, opt := range opts {
 		opt(&options)
