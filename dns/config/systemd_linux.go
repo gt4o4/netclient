@@ -215,7 +215,7 @@ func (s *systemdUplinkManager) Configure(iface string, config Config) error {
 
 func (s *systemdUplinkManager) resetConfig() error {
 	err := os.Remove(resolvedConfFile)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 
