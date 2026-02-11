@@ -10,6 +10,7 @@ import (
 )
 
 const (
+	resolvedConfDir  = "/etc/systemd/resolved.conf.d"
 	resolvedConfFile = "/etc/systemd/resolved.conf.d/0-netmaker.conf"
 )
 
@@ -143,6 +144,11 @@ func newSystemdUplinkManager(opts ...ManagerOption) (*systemdUplinkManager, erro
 	var options ManagerOptions
 	for _, opt := range opts {
 		opt(&options)
+	}
+
+	err := os.MkdirAll(resolvedConfDir, 0755)
+	if err != nil {
+		return nil, err
 	}
 
 	if options.cleanupResidual {
