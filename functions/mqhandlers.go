@@ -588,15 +588,8 @@ func resetInterfaceFunc() {
 		return
 	}
 	if server.ManageDNS {
-		// if dns.GetDNSServerInstance().AddrStr == "" {
-		// 	dns.GetDNSServerInstance().Monitor()
-		// }
-
-		//Setup DNS for Linux and Windows
-		if config.Netclient().Host.OS == "linux" || config.Netclient().Host.OS == "windows" {
-			dns.GetDNSServerInstance().Stop()
-			dns.GetDNSServerInstance().Start()
-		}
+		dns.GetDNSServerInstance().Stop()
+		dns.GetDNSServerInstance().Start()
 	}
 	wireguard.EgressResetCh <- struct{}{}
 }
