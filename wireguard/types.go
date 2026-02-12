@@ -17,11 +17,12 @@ import (
 
 // NCIface - represents a Netclient network interface
 type NCIface struct {
-	Iface     netIface
-	Name      string
-	Addresses []ifaceAddress
-	MTU       int
-	Config    wgtypes.Config
+	Iface       netIface
+	Name        string
+	Addresses   []ifaceAddress
+	MTU         int
+	Config      wgtypes.Config
+	IsTestIface bool
 }
 
 var netmaker NCIface
