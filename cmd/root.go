@@ -72,6 +72,7 @@ func initConfig() {
 	if runtime.GOOS == "darwin" {
 		nc.Name = "utun70"
 	}
+	nc.IsTestIface = true
 	if err := nc.Create(); err != nil {
 		slog.Error("failed to create interface, is wireguard installed?", "error", err)
 		os.Exit(1)
