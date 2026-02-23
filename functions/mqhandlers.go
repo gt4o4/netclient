@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/devilcove/httpclient"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/gravitl/netclient/auth"
 	"github.com/gravitl/netclient/cache"
@@ -252,7 +251,11 @@ func HostPeerUpdate(client mqtt.Client, msg mqtt.Message) {
 			metricTicker.Reset(time.Minute * time.Duration(i))
 		}
 		server.MetricInterval = peerUpdate.MetricInterval
-
+	}
+	if peerUpdate.IPDetectionInterval != 0 && peerUpdate.IPDetectionInterval != server.IPDetectionInterval {
+		ipTicker.Reset(time.Second * time.Duration(peerUpdate.IPDetectionInterval))
+		server.IPDetectionInterval = peerUpdate.IPDetectionInterval
+		saveServerConfig = true
 	}
 	//get the current default gateway
 	ip, err := wireguard.GetDefaultGatewayIp()
@@ -373,8 +376,9 @@ func HostPeerUpdate(client mqtt.Client, msg mqtt.Message) {
 		case stop:
 			dns.GetDNSServerInstance().Stop()
 		case update:
-			_ = dns.SetupDNSConfig()
-			_ = dns.FlushLocalDnsCache()
+			if dns.GetDNSServerInstance().AddrStr != "" {
+				_ = dns.Configure()
+			}
 		}
 	}
 
@@ -584,15 +588,8 @@ func resetInterfaceFunc() {
 		return
 	}
 	if server.ManageDNS {
-		// if dns.GetDNSServerInstance().AddrStr == "" {
-		// 	dns.GetDNSServerInstance().Monitor()
-		// }
-
-		//Setup DNS for Linux and Windows
-		if config.Netclient().Host.OS == "linux" || config.Netclient().Host.OS == "windows" {
-			dns.GetDNSServerInstance().Stop()
-			dns.GetDNSServerInstance().Start()
-		}
+		dns.GetDNSServerInstance().Stop()
+		dns.GetDNSServerInstance().Start()
 	}
 	wireguard.EgressResetCh <- struct{}{}
 }
@@ -715,27 +712,23 @@ func handleFwUpdate(server string, payload *models.FwUpdate) {
 }
 
 func getServerBrokerStatus() (bool, error) {
-
 	server := config.GetServer(config.CurrServer)
 	if server == nil {
 		return false, errors.New("server is nil")
 	}
-	var status map[string]interface{}
+
 	url := fmt.Sprintf("https://%s/api/server/status", server.API)
-	endpoint := httpclient.JSONEndpoint[map[string]interface{}, models.ErrorResponse]{
-		URL:           url,
-		Method:        http.MethodGet,
-		Data:          nil,
-		Response:      status,
-		ErrorResponse: models.ErrorResponse{},
-	}
-	response, errData, err := endpoint.GetJSON(status, models.ErrorResponse{})
+	headers := make(http.Header)
+	headers.Set("Content-Type", "application/json")
+	respBytes, err := ncutils.SendRequest(http.MethodGet, url, headers, nil)
 	if err != nil {
-		if errors.Is(err, httpclient.ErrStatus) {
-			logger.Log(0, "status error calling ", endpoint.URL, errData.Message)
-			return false, err
-		}
 		logger.Log(1, "failed to read from server during metrics publish", err.Error())
+		return false, err
+	}
+
+	response := make(map[string]interface{})
+	err = json.Unmarshal(respBytes.Bytes(), &response)
+	if err != nil {
 		return false, err
 	}
 
@@ -793,6 +786,7 @@ func mqFallback(ctx context.Context, wg *sync.WaitGroup) {
 func mqFallbackPull(pullResponse models.HostPull, resetInterface, replacePeers bool) {
 	serverName := config.CurrServer
 	server := config.GetServer(serverName)
+	var saveServerConfig bool
 	if server == nil {
 		slog.Error("server not found in config", "server", serverName)
 		return
@@ -826,6 +820,11 @@ func mqFallbackPull(pullResponse models.HostPull, resetInterface, replacePeers b
 		server.MetricsPort = pullResponse.ServerConfig.MetricsPort
 		config.WriteServerConfig()
 		daemon.Restart()
+	}
+	if pullResponse.ServerConfig.IPDetectionInterval != 0 && pullResponse.ServerConfig.IPDetectionInterval != server.IPDetectionInterval {
+		ipTicker.Reset(time.Second * time.Duration(pullResponse.ServerConfig.IPDetectionInterval))
+		server.IPDetectionInterval = pullResponse.ServerConfig.IPDetectionInterval
+		saveServerConfig = true
 	}
 	//get the current default gateway
 	ip, err := wireguard.GetDefaultGatewayIp()
@@ -889,32 +888,35 @@ func mqFallbackPull(pullResponse models.HostPull, resetInterface, replacePeers b
 	}
 	go CheckEgressDomainUpdates()
 	pullResponse.DnsNameservers = FilterDnsNameservers(pullResponse.DnsNameservers)
-	var saveServerConfig bool
-	if len(server.NameServers) != len(pullResponse.NameServers) || reflect.DeepEqual(server.NameServers, pullResponse.NameServers) {
-		server.NameServers = pullResponse.NameServers
-		saveServerConfig = true
-	}
-
-	if len(server.DnsNameservers) != len(pullResponse.DnsNameservers) || reflect.DeepEqual(server.DnsNameservers, pullResponse.DnsNameservers) {
-		server.DnsNameservers = pullResponse.DnsNameservers
-		saveServerConfig = true
-	}
-
-	if pullResponse.ServerConfig.ManageDNS != server.ManageDNS {
-		server.ManageDNS = pullResponse.ServerConfig.ManageDNS
-		saveServerConfig = true
-		if pullResponse.ServerConfig.ManageDNS {
-			dns.GetDNSServerInstance().Start()
-		} else {
-			dns.GetDNSServerInstance().Stop()
-		}
-	}
-
+	var dnsOp string
+	const start string = "start"
+	const stop string = "stop"
+	const update string = "update"
 	if server.ManageDNS {
-		if (config.Netclient().Host.OS == "linux" && dns.GetDNSServerInstance().AddrStr != "" && config.Netclient().DNSManagerType == dns.DNS_MANAGER_STUB) ||
-			config.Netclient().Host.OS == "windows" {
-			_ = dns.SetupDNSConfig()
-			_ = dns.FlushLocalDnsCache()
+		if !pullResponse.ServerConfig.ManageDNS {
+			server.ManageDNS = false
+			server.DefaultDomain = ""
+			server.NameServers = nil
+			server.DnsNameservers = nil
+			saveServerConfig = true
+			dnsOp = stop
+		} else if server.DefaultDomain != pullResponse.ServerConfig.DefaultDomain ||
+			len(server.DnsNameservers) != len(pullResponse.DnsNameservers) ||
+			!reflect.DeepEqual(server.DnsNameservers, pullResponse.DnsNameservers) {
+			server.DefaultDomain = pullResponse.ServerConfig.DefaultDomain
+			server.NameServers = pullResponse.NameServers
+			server.DnsNameservers = pullResponse.DnsNameservers
+			saveServerConfig = true
+			dnsOp = update
+		}
+	} else {
+		if pullResponse.ServerConfig.ManageDNS {
+			server.ManageDNS = true
+			server.DefaultDomain = pullResponse.ServerConfig.DefaultDomain
+			server.NameServers = pullResponse.NameServers
+			server.DnsNameservers = pullResponse.DnsNameservers
+			saveServerConfig = true
+			dnsOp = start
 		}
 	}
 
@@ -934,8 +936,19 @@ func mqFallbackPull(pullResponse models.HostPull, resetInterface, replacePeers b
 		saveServerConfig = true
 	}
 
-	if reloadStun {
-		daemon.Restart()
+	if saveServerConfig {
+		config.UpdateServer(serverName, *server)
+		_ = config.WriteServerConfig()
+		switch dnsOp {
+		case start:
+			dns.GetDNSServerInstance().Start()
+		case stop:
+			dns.GetDNSServerInstance().Stop()
+		case update:
+			if dns.GetDNSServerInstance().AddrStr != "" {
+				_ = dns.Configure()
+			}
+		}
 	}
 
 	if pullResponse.Host.EnableFlowLogs {
@@ -944,9 +957,8 @@ func mqFallbackPull(pullResponse models.HostPull, resetInterface, replacePeers b
 		_ = flow.GetManager().Stop()
 	}
 
-	if saveServerConfig {
-		config.UpdateServer(serverName, *server)
-		_ = config.WriteServerConfig()
+	if reloadStun {
+		_ = daemon.Restart()
 	}
 
 	handleFwUpdate(serverName, &pullResponse.FwUpdate)

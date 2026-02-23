@@ -17,11 +17,12 @@ import (
 
 // NCIface - represents a Netclient network interface
 type NCIface struct {
-	Iface     netIface
-	Name      string
-	Addresses []ifaceAddress
-	MTU       int
-	Config    wgtypes.Config
+	Iface       netIface
+	Name        string
+	Addresses   []ifaceAddress
+	MTU         int
+	Config      wgtypes.Config
+	IsTestIface bool
 }
 
 var netmaker NCIface
@@ -132,6 +133,9 @@ func SetEgressRoutes(egressRoutes []models.EgressNetworkRoutes) {
 	for _, egressRoute := range egressRoutes {
 		for _, egressRange := range egressRoute.EgressRangesWithMetric {
 			egressRangeIPNet := config.ToIPNet(egressRange.Network)
+			if egressRange.Nat && egressRange.Mode == models.VirtualNAT && egressRange.VirtualNetwork != "" {
+				egressRangeIPNet = config.ToIPNet(egressRange.VirtualNetwork)
+			}
 			if egressRangeIPNet.IP != nil {
 				if len(config.GetNodes()) == 1 {
 					if runtime.GOOS == "linux" {
