@@ -171,8 +171,8 @@ func validateIface(iface string) bool {
 		fmt.Println("use utun as interface on darwin")
 		return false
 	}
-	if runtime.GOOS != "darwin" && !strings.HasPrefix(iface, "netmaker") {
-		fmt.Println("invalid interface name, should contain `netmaker` as prefix")
+	if runtime.GOOS != "darwin" && !strings.HasPrefix(iface, "netmaker") && !strings.HasPrefix(iface, "zth") {
+		fmt.Println("invalid interface name, should have `netmaker` or `zth` as prefix")
 		return false
 	}
 	return true

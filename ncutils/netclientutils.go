@@ -119,7 +119,7 @@ func GetInterfaces() ([]models.Iface, error) {
 		if iface.Flags&net.FlagUp == 0 || // interface down
 			iface.Flags&net.FlagLoopback != 0 || // loopback interface
 			iface.Flags&net.FlagPointToPoint != 0 || // avoid direct connections
-			iface.Name == GetInterfaceName() || strings.Contains(iface.Name, "netmaker") || // avoid netmaker
+			iface.Name == GetInterfaceName() || strings.Contains(iface.Name, "netmaker") || strings.Contains(iface.Name, "zth") || // avoid netmaker/zth
 			IsBridgeNetwork(iface.Name) || // avoid bridges
 			strings.Contains(iface.Name, "docker") || // avoid docker
 			isExcludedInterface(iface.Name) { // avoid user-configured interfaces (default: flannel, cni)
@@ -300,7 +300,7 @@ func GetInterfaceName() string {
 	if runtime.GOOS == "darwin" {
 		return "utun69"
 	}
-	return "netmaker"
+	return "zth0"
 }
 
 // RandomMacAddress returns a random macaddress
