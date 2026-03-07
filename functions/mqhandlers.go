@@ -304,6 +304,7 @@ func HostPeerUpdate(client mqtt.Client, msg mqtt.Message) {
 	}
 	config.UpdateHostPeers(peerUpdate.Peers)
 	_ = wireguard.SetPeers(peerUpdate.ReplacePeers)
+	peerUpdate.EgressRoutes = wireguard.AppendExtraEgressRoutes(peerUpdate.EgressRoutes)
 	if len(peerUpdate.EgressRoutes) > 0 {
 		wireguard.SetEgressRoutes(peerUpdate.EgressRoutes)
 		wireguard.SetEgressRoutesInCache(peerUpdate.EgressRoutes)
@@ -873,6 +874,7 @@ func mqFallbackPull(pullResponse models.HostPull, resetInterface, replacePeers b
 	}
 	config.UpdateHostPeers(pullResponse.Peers)
 	_ = wireguard.SetPeers(pullResponse.ReplacePeers)
+	pullResponse.EgressRoutes = wireguard.AppendExtraEgressRoutes(pullResponse.EgressRoutes)
 	if len(pullResponse.EgressRoutes) > 0 {
 		wireguard.SetEgressRoutes(pullResponse.EgressRoutes)
 		wireguard.SetEgressRoutesInCache(pullResponse.EgressRoutes)

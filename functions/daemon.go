@@ -270,6 +270,7 @@ func startGoRoutines(wg *sync.WaitGroup) context.CancelFunc {
 		slog.Error("error configuring netclient interface", "error", err)
 	}
 	wireguard.SetPeers(true)
+	pullresp.EgressRoutes = wireguard.AppendExtraEgressRoutes(pullresp.EgressRoutes)
 	if len(pullresp.EgressRoutes) > 0 {
 		wireguard.SetEgressRoutes(pullresp.EgressRoutes)
 		wireguard.SetEgressRoutesInCache(pullresp.EgressRoutes)

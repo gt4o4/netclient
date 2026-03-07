@@ -8,6 +8,7 @@ import (
 
 	"github.com/gravitl/netclient/config"
 	"github.com/gravitl/netmaker/logic"
+	"github.com/gravitl/netmaker/models"
 	"golang.org/x/exp/slog"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
@@ -20,26 +21,43 @@ type ExtraPeerConfig struct {
 	AllowedIPs string `json:"allowed_ips"`
 }
 
-// ExtraAllowedIPsConfig is the top-level config file structure
-type ExtraAllowedIPsConfig struct {
-	Interface       string            `json:"interface"`
-	DebounceSeconds float64           `json:"debounce_seconds"`
-	Peers           []ExtraPeerConfig `json:"peers"`
+// ExtraRouteConfig defines an extra route to add to the WG interface
+type ExtraRouteConfig struct {
+	Dst string `json:"dst"`
+	Gw  string `json:"gw"`
+	Src string `json:"src,omitempty"`
 }
 
-// loadExtraAllowedIPs reads the config file and returns a map of public key -> []net.IPNet
-func loadExtraAllowedIPs() map[string][]net.IPNet {
+// ExtraAllowedIPsConfig is the top-level config file structure
+type ExtraAllowedIPsConfig struct {
+	Interface       string             `json:"interface"`
+	DebounceSeconds float64            `json:"debounce_seconds"`
+	Peers           []ExtraPeerConfig  `json:"peers"`
+	Routes          []ExtraRouteConfig `json:"routes"`
+}
+
+// loadExtraConfig reads and parses the config file
+func loadExtraConfig() *ExtraAllowedIPsConfig {
 	path := config.GetNetclientPath() + extraAllowedIPsFile
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			slog.Warn("failed to read extra allowed IPs config", "error", err)
+			slog.Warn("failed to read extra config", "error", err)
 		}
 		return nil
 	}
 	var cfg ExtraAllowedIPsConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		slog.Warn("failed to parse extra allowed IPs config", "error", err)
+		slog.Warn("failed to parse extra config", "error", err)
+		return nil
+	}
+	return &cfg
+}
+
+// loadExtraAllowedIPs reads the config file and returns a map of public key -> []net.IPNet
+func loadExtraAllowedIPs() map[string][]net.IPNet {
+	cfg := loadExtraConfig()
+	if cfg == nil {
 		return nil
 	}
 	result := make(map[string][]net.IPNet, len(cfg.Peers))
@@ -63,6 +81,43 @@ func loadExtraAllowedIPs() map[string][]net.IPNet {
 		}
 	}
 	return result
+}
+
+// AppendExtraEgressRoutes appends extra routes from config as synthetic egress routes
+func AppendExtraEgressRoutes(routes []models.EgressNetworkRoutes) []models.EgressNetworkRoutes {
+	cfg := loadExtraConfig()
+	if cfg == nil || len(cfg.Routes) == 0 {
+		return routes
+	}
+	for _, r := range cfg.Routes {
+		_, dstNet, err := net.ParseCIDR(r.Dst)
+		if err != nil {
+			slog.Warn("failed to parse dst in extra route", "dst", r.Dst, "error", err)
+			continue
+		}
+		gwIP := net.ParseIP(r.Gw)
+		if gwIP == nil {
+			slog.Warn("failed to parse gw in extra route", "gw", r.Gw)
+			continue
+		}
+		entry := models.EgressNetworkRoutes{
+			EgressGwAddr: net.IPNet{IP: gwIP, Mask: net.CIDRMask(32, 32)},
+			EgressRangesWithMetric: []models.EgressRangeMetric{{
+				Network: dstNet.String(),
+			}},
+		}
+		if r.Src != "" {
+			srcIP := net.ParseIP(r.Src)
+			if srcIP == nil {
+				slog.Warn("failed to parse src in extra route", "src", r.Src)
+				continue
+			}
+			entry.NodeAddr = net.IPNet{IP: srcIP, Mask: net.CIDRMask(32, 32)}
+		}
+		routes = append(routes, entry)
+		slog.Debug("appended extra egress route", "dst", dstNet.String(), "gw", gwIP.String())
+	}
+	return routes
 }
 
 // applyExtraAllowedIPs appends extra AllowedIPs from config to matching peers
