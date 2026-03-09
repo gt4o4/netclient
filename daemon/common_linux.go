@@ -188,10 +188,15 @@ func GetInitType() config.InitType {
 	}
 	out, err := ncutils.RunCmd("ls -l /sbin/init", false)
 	if err != nil {
-		slog.Error("error checking /sbin/init", "error", err)
-		return config.UnKnown
+		slog.Warn("error checking /sbin/init, falling back to /proc/1/comm", "error", err)
+		// NixOS and other distros may not have /sbin/init; check PID 1 name
+		out, err = ncutils.RunCmd("cat /proc/1/comm", false)
+		if err != nil {
+			slog.Error("error checking /proc/1/comm", "error", err)
+			return config.UnKnown
+		}
 	}
-	slog.Debug("checking /sbin/init", "output ", out)
+	slog.Debug("checking init system", "output", out)
 	if strings.Contains(out, "systemd") {
 		// ubuntu, debian, fedora, suse, etc
 		return config.Systemd
