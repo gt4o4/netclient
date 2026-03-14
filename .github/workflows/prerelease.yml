@@ -35,6 +35,16 @@ jobs:
         run: |
           git tag -f ${{ inputs.version }}
           git push origin ${{ inputs.version }} --force
+      - name: Debug - find mingw compilers
+        run: |
+          echo "=== which x86_64-w64-mingw32-gcc ==="
+          which x86_64-w64-mingw32-gcc || true
+          echo "=== find llvm-mingw ==="
+          find / -name "*aarch64*mingw*" -o -name "llvm-mingw" 2>/dev/null | head -20 || true
+          echo "=== find mingw dirs ==="
+          find / -maxdepth 3 -type d -name "*mingw*" 2>/dev/null || true
+          echo "=== PATH ==="
+          echo "$PATH"
       - name: GoReleaser
         run: goreleaser release --clean --config .goreleaser.prerelease.yaml --release-notes release.md
         env:
