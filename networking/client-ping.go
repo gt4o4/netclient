@@ -18,6 +18,7 @@ import (
 	"github.com/gravitl/netclient/ncutils"
 	"github.com/gravitl/netclient/wireguard"
 	"github.com/gravitl/netmaker/models"
+	"github.com/gravitl/netmaker/schema"
 	"golang.org/x/exp/slog"
 )
 
@@ -130,7 +131,7 @@ func CheckPeerEndpoints(ctx context.Context, waitg *sync.WaitGroup) {
 					if node.Server != config.CurrServer {
 						continue
 					}
-					peers, ok := peerInfo.NetworkPeerIDs[models.NetworkID(node.Network)]
+					peers, ok := peerInfo.NetworkPeerIDs[schema.NetworkID(node.Network)]
 					if !ok {
 						continue
 					}
