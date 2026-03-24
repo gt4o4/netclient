@@ -19,6 +19,7 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	externalip "github.com/glendc/go-external-ip"
+	"github.com/gravitl/netclient/auth"
 	"github.com/gravitl/netclient/cache"
 	"github.com/gravitl/netclient/config"
 	"github.com/gravitl/netclient/daemon"
@@ -33,6 +34,7 @@ import (
 	"github.com/gravitl/netmaker/logger"
 	"github.com/gravitl/netmaker/logic"
 	"github.com/gravitl/netmaker/models"
+	"github.com/gravitl/netmaker/schema"
 	"golang.org/x/exp/slog"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
@@ -135,6 +137,8 @@ func closeRoutines(closers []context.CancelFunc, wg *sync.WaitGroup) {
 	}
 	wg.Wait()
 	// clear cache
+	auth.CleanJwtToken()
+	networking.ClearPeerInfoCache()
 	cache.EndpointCache = sync.Map{}
 	cache.SkipEndpointCache = sync.Map{}
 	cache.EgressRouteCache = sync.Map{}
@@ -673,7 +677,9 @@ func UpdateKeys() error {
 		slog.Error("error generating privatekey ", "error", err)
 		return err
 	}
-	host.PublicKey = host.PrivateKey.PublicKey()
+	host.PublicKey = schema.WgKey{
+		Key: host.PrivateKey.PublicKey(),
+	}
 	if err := config.WriteNetclientConfig(); err != nil {
 		slog.Error("error saving netclient config:", "error", err)
 	}

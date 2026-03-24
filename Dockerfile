@@ -6,7 +6,7 @@ COPY . .
 RUN go mod tidy
 RUN GOOS=linux CGO_ENABLED=1 /usr/local/go/bin/go build -ldflags="-s -w" -o netclient-app .
 
-# Use this version until this issue is resolved.
+# Use version 3.22.3 until this issue is resolved.
 # https://github.com/NetworkConfiguration/openresolv/issues/45
 FROM alpine:latest
 
@@ -23,7 +23,7 @@ RUN apk add --no-cache --update \
 
 COPY --from=builder /app/netclient-app ./netclient
 COPY --from=builder /app/scripts/netclient.sh .
-RUN chmod 0755 netclient && chmod 0755 netclient.sh
+RUN chmod 0755 netclient && chmod 0755 netclient.sh && ln -s /root/netclient /usr/bin/netclient
 
 ENV WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go
 

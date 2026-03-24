@@ -38,24 +38,9 @@ if [ "${ENDPOINT6}" != "" ]; then
     ENDPOINT6_CMD="-E ${ENDPOINT6}"
 fi
 
-MTU_CMD=""
-if [ "${MTU}" != "" ]; then
-    MTU_CMD="-m ${MTU}"
-fi
-
 HOSTNAME_CMD=""
 if [ "${HOST_NAME}" != "" ]; then
     HOSTNAME_CMD="-o ${HOST_NAME}"
-fi
-
-STATIC_CMD=""
-if [ "${IS_STATIC}" != "" ]; then
-    STATIC_CMD="-i ${IS_STATIC}"
-fi
-
-STATIC_PORT_CMD=""
-if [ "${IS_STATIC_PORT}" != "" ]; then
-    STATIC_PORT_CMD="-j ${IS_STATIC_PORT}"
 fi
 
 IFACE_CMD=""
@@ -79,4 +64,4 @@ fi
 
 # Run daemon directly as the foreground process
 echo "[netclient] starting netclient daemon"
-exec /root/netclient $VERBOSITY_CMD daemon
+exec /root/netclient daemon $VERBOSITY_CMD
