@@ -12,6 +12,8 @@ import (
 	"github.com/gravitl/netclient/ncutils"
 	"github.com/gravitl/netmaker/logger"
 	"github.com/gravitl/netmaker/models"
+	"github.com/gravitl/netmaker/schema"
+	"golang.org/x/exp/slog"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
@@ -30,10 +32,7 @@ var wgMutex = sync.Mutex{} // used to mutex functions of the interface
 
 // NewNCIFace - creates a new Netclient interface in memory
 func NewNCIface(host *config.Config, nodes config.NodeMap) *NCIface {
-	// FirewallMark is used for policy-based routing. Set to 0 (disabled) unless
-	// policy-based routing is specifically required. Using 0 is the standard
-	// practice when not using policy-based routing.
-	firewallMark := 0
+	firewallMark := host.FwMark
 	peers := config.Netclient().HostPeers
 	// on freebsd, calling wgcltl.Client.ConfigureDevice() with []Peers{} causes an ioctl error --> ioctl: bad address
 	if len(peers) == 0 {
@@ -126,6 +125,51 @@ func RemoveEgressRoutes() {
 	cache.EgressRouteCache = sync.Map{}
 }
 
+// isNetworkPresentOnLocalInterface checks whether the given network overlaps
+// with any address already assigned to a local network interface (excluding
+// the netmaker WG interface). Overlap means the egress network contains a
+// local interface IP, which would cause a routing conflict.
+func isNetworkPresentOnLocalInterface(network net.IPNet) bool {
+	ncIfaceName := ncutils.GetInterfaceName()
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return false
+	}
+	for _, iface := range ifaces {
+		if iface.Name == ncIfaceName {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			if network.Contains(ipNet.IP) || ipNet.Contains(network.IP) {
+				return true
+			}
+
+		}
+	}
+	return false
+}
+
+func filterConflictingRoutes(addrs []ifaceAddress) []ifaceAddress {
+	filtered := make([]ifaceAddress, 0, len(addrs))
+	for _, addr := range addrs {
+		if addr.Network.IP != nil && isNetworkPresentOnLocalInterface(addr.Network) {
+			slog.Warn("skipping egress route that conflicts with local interface address",
+				"network", addr.Network.String())
+			continue
+		}
+		filtered = append(filtered, addr)
+	}
+	return filtered
+}
+
 func SetEgressRoutes(egressRoutes []models.EgressNetworkRoutes) {
 	wgMutex.Lock()
 	defer wgMutex.Unlock()
@@ -133,7 +177,7 @@ func SetEgressRoutes(egressRoutes []models.EgressNetworkRoutes) {
 	for _, egressRoute := range egressRoutes {
 		for _, egressRange := range egressRoute.EgressRangesWithMetric {
 			egressRangeIPNet := config.ToIPNet(egressRange.Network)
-			if egressRange.Nat && egressRange.Mode == models.VirtualNAT && egressRange.VirtualNetwork != "" {
+			if egressRange.Nat && egressRange.Mode == schema.VirtualNAT && egressRange.VirtualNetwork != "" {
 				egressRangeIPNet = config.ToIPNet(egressRange.VirtualNetwork)
 			}
 			if egressRangeIPNet.IP != nil {
@@ -211,6 +255,8 @@ func SetEgressRoutes(egressRoutes []models.EgressNetworkRoutes) {
 		}
 	}
 
+	addrs = filterConflictingRoutes(addrs)
+
 	if addrs1, ok := cache.EgressRouteCache.Load(config.Netclient().Host.ID.String()); ok {
 		isSame := checkEgressRoutes(addrs, addrs1.([]ifaceAddress))
 
@@ -230,9 +276,8 @@ func SetEgressRoutes(egressRoutes []models.EgressNetworkRoutes) {
 }
 
 func SetRoutesFromCache() {
-	//egress route
 	if addrs1, ok := cache.EgressRouteCache.Load(config.Netclient().Host.ID.String()); ok {
-		SetRoutes(addrs1.([]ifaceAddress))
+		SetRoutes(filterConflictingRoutes(addrs1.([]ifaceAddress)))
 	}
 	//inetGW route
 	gwIp := config.Netclient().CurrGwNmIP

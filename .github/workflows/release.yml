@@ -4,12 +4,36 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "new version number"
+        description: "Version tag (e.g. v1.0.0)"
         required: true
+
+permissions:
+  contents: write
 
 jobs:
   release:
-    uses: gravitl/devops/.github/workflows/netclientRelease.yml@master
-    with:
-      version: ${{ inputs.version }}
-    secrets: inherit
+    runs-on: arc-runner-set
+    container: ghcr.io/goreleaser/goreleaser-cross:v1.25.1
+    steps:
+      - name: Install additional cross-compilers
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends \
+            gcc-mips-linux-gnu libc6-dev-mips-cross \
+            gcc-mipsel-linux-gnu libc6-dev-mipsel-cross \
+            gcc-mips64el-linux-gnuabi64 libc6-dev-mips64el-cross
+      - name: Mark workspace as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Fetch tags
+        run: git fetch --force --tags
+      - name: Create and push tag
+        run: |
+          git tag -f ${{ inputs.version }}
+          git push origin ${{ inputs.version }} --force
+      - name: GoReleaser
+        run: goreleaser release --clean --release-notes release.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

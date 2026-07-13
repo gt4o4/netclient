@@ -1,9 +1,11 @@
-name: Deploy and Test Branch
+name: Deploy and Test Branch (disabled - requires gravitl/devops)
 
 on:
-  pull_request:
-      types: [opened, synchronize, reopened]
-      branches: [develop]
+  workflow_dispatch:
+  # Disabled: originally triggered on pull_request to develop
+  # pull_request:
+  #     types: [opened, synchronize, reopened]
+  #     branches: [develop]
 
 jobs:
   skip-check:
