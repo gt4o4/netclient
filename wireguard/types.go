@@ -125,10 +125,10 @@ func RemoveEgressRoutes() {
 	cache.EgressRouteCache = sync.Map{}
 }
 
-// IsNetworkPresentOnLocalInterface checks whether the given network overlaps
-// with any address already assigned to a local network interface (excluding
-// the netmaker WG interface). Overlap means the egress network contains a
-// local interface IP, which would cause a routing conflict.
+// IsNetworkPresentOnLocalInterface checks whether the given network is an
+// exact match (same prefix length and same network address) for a network
+// already assigned to a local interface (excluding the netmaker WG
+// interface), which would cause a routing conflict.
 func IsNetworkPresentOnLocalInterface(network net.IPNet) bool {
 	ncIfaceName := ncutils.GetInterfaceName()
 	ifaces, err := net.Interfaces()

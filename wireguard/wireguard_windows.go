@@ -78,7 +78,7 @@ func (nc *NCIface) Create() error {
 	}
 
 	if ifaceMetric != 0 {
-		_, err = runPSCommand(fmt.Sprintf("Set-NetIPInterface -InterfaceAlias '%s' -InterfaceMetric %d", nc.Name, ifaceMetric+1))
+		_, err = runPSCommand(fmt.Sprintf("Set-NetIPInterface -InterfaceAlias '%s' -InterfaceMetric %d", psEscapeSingleQuoted(nc.Name), ifaceMetric+1))
 		if err != nil {
 			return err
 		}
@@ -593,8 +593,15 @@ func getResolvingInterfaceMetric() (uint32, error) {
 	}
 
 	var entries []dnsEntry
-	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &entries); err != nil {
-		return 0, err
+	raw := []byte(strings.TrimSpace(output))
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		// ConvertTo-Json emits a bare object (not a one-element array) when
+		// the pipeline yields a single result.
+		var entry dnsEntry
+		if err2 := json.Unmarshal(raw, &entry); err2 != nil {
+			return 0, err
+		}
+		entries = append(entries, entry)
 	}
 
 	var lowest uint32 = math.MaxUint32
@@ -602,7 +609,7 @@ func getResolvingInterfaceMetric() (uint32, error) {
 		for _, dnsServer := range entry.ServerAddresses {
 			resolveOut, err := runPSCommand(fmt.Sprintf(
 				"Resolve-DnsName '%s' -Server '%s' -Type A -ErrorAction SilentlyContinue",
-				testDomain, dnsServer))
+				testDomain, psEscapeSingleQuoted(dnsServer)))
 			if err == nil && strings.Contains(resolveOut, testDomain) {
 				metricOut, err := runPSCommand(fmt.Sprintf(
 					"(Get-NetIPInterface -InterfaceIndex %d -AddressFamily IPv4).InterfaceMetric",
@@ -628,6 +635,12 @@ func getResolvingInterfaceMetric() (uint32, error) {
 	}
 
 	return lowest, nil
+}
+
+// psEscapeSingleQuoted escapes a value for interpolation inside a
+// single-quoted PowerShell string ('' is the escape for a literal ').
+func psEscapeSingleQuoted(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
 }
 
 func runPSCommand(command string) (string, error) {

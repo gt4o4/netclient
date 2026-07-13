@@ -71,7 +71,7 @@ func (r *resolvconfManager) Configure(iface string, config Config) error {
 
 	confBytes := new(bytes.Buffer)
 
-	var nameservers []net.IP
+	nameservers := make([]net.IP, len(config.Nameservers))
 	copy(nameservers, config.Nameservers)
 
 	nameservers = append(nameservers, net.ParseIP("8.8.8.8"), net.ParseIP("2001:4860:4860::8888"))
