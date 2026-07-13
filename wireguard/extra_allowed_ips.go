@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gravitl/netclient/config"
@@ -38,7 +39,7 @@ type ExtraAllowedIPsConfig struct {
 
 // loadExtraConfig reads and parses the config file
 func loadExtraConfig() *ExtraAllowedIPsConfig {
-	path := config.GetNetclientPath() + extraAllowedIPsFile
+	path := filepath.Join(config.GetNetclientPath(), extraAllowedIPsFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
