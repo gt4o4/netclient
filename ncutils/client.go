@@ -13,6 +13,12 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 )
 
+// httpDialTimeout is the per-Dial timeout for outbound HTTP/S requests
+// from SendRequest. Mirrors retryablehttp's default behavior — long
+// enough to accommodate the worst-case Cloudflare-fronted edge handshake
+// (TLS over MPTCP), short enough that a dead edge falls back to retry.
+const httpDialTimeout = 30 * time.Second
+
 type ErrStatusNotOk struct {
 	Status  int
 	Message string
@@ -53,6 +59,19 @@ func SendRequest(method, endpoint string, headers http.Header, data any) (*bytes
 	}
 
 	client := retryablehttp.NewClient()
+	// Override the default transport so outbound TCP becomes MPTCP-capable
+	// (auto-fallback to plain TCP) and so api.nm.wenri.org:443 is rewritten
+	// to its Cloudflare anycast edge per /etc/netclient/peers_extra_ips.json.
+	// TLS still uses the URL host for SNI/cert verification.
+	client.HTTPClient.Transport = &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           MPTCPDialContext(httpDialTimeout),
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
 	client.RetryMax = 3
 	client.Logger = nil
 	client.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {

@@ -17,7 +17,7 @@ import (
 	"strings"
 
 	"github.com/gravitl/netmaker/logger"
-	"github.com/gravitl/netmaker/models"
+	"github.com/gravitl/netmaker/schema"
 )
 
 var ifaceName string
@@ -107,19 +107,19 @@ func isExcludedInterface(ifaceName string) bool {
 	return false
 }
 
-func GetInterfaces() ([]models.Iface, error) {
+func GetInterfaces() ([]schema.Iface, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil, err
 	}
-	var data = []models.Iface{}
-	var link models.Iface
+	var data = []schema.Iface{}
+	var link schema.Iface
 	for _, iface := range ifaces {
 		iface := iface
 		if iface.Flags&net.FlagUp == 0 || // interface down
 			iface.Flags&net.FlagLoopback != 0 || // loopback interface
 			iface.Flags&net.FlagPointToPoint != 0 || // avoid direct connections
-			iface.Name == GetInterfaceName() || strings.Contains(iface.Name, "netmaker") || // avoid netmaker
+			iface.Name == GetInterfaceName() || strings.Contains(iface.Name, "netmaker") || strings.Contains(iface.Name, "zth") || // avoid netmaker/zth
 			IsBridgeNetwork(iface.Name) || // avoid bridges
 			strings.Contains(iface.Name, "docker") || // avoid docker
 			isExcludedInterface(iface.Name) { // avoid user-configured interfaces (default: flannel, cni)
@@ -149,15 +149,15 @@ func GetInterfaces() ([]models.Iface, error) {
 
 // GetFreePort - gets free port of machine
 func GetFreePort(rangestart, currListenPort int, init bool) (int, error) {
-	if init || currListenPort == 443 {
-		// check 443 is free
+	if currListenPort > 0 {
+		// check if curr listen port is free
 		udpAddr := net.UDPAddr{
-			Port: 443,
+			Port: currListenPort,
 		}
 		udpConn, udpErr := net.ListenUDP("udp", &udpAddr)
 		if udpErr == nil {
 			udpConn.Close()
-			return 443, nil
+			return currListenPort, nil
 		}
 	}
 	if rangestart == 0 {
@@ -289,7 +289,7 @@ func GetInterfaceName() string {
 	if runtime.GOOS == "darwin" {
 		return "utun69"
 	}
-	return "netmaker"
+	return "zth0"
 }
 
 // RandomMacAddress returns a random macaddress

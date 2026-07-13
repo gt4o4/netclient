@@ -1,28 +1,94 @@
+version: 2
 before:
   hooks:
-    # You may remove this if you don't use go modules.
     - go mod tidy
 builds:
-  - 
+  -
     id: headless
     binary: netclient
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
     ldflags:
       - -s -w
     targets:
       - linux_amd64
       - linux_arm64
-      - linux_arm_5
-      - linux_arm_6
-      - linux_arm_7
       - linux_mips_hardfloat
-      - linux_mips_softfloat
-      - linux_mipsle_softfloat
       - linux_mipsle_hardfloat
+      - linux_mips64le_hardfloat
+      - windows_amd64
+      - windows_arm64
+      - darwin_amd64
+      - darwin_arm64
+    overrides:
+      - goos: linux
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
+          - CC=aarch64-linux-gnu-gcc
+      - goos: linux
+        goarch: mips
+        gomips: hardfloat
+        env:
+          - CGO_ENABLED=1
+          - CC=mips-linux-gnu-gcc
+      - goos: linux
+        goarch: mipsle
+        gomips: hardfloat
+        env:
+          - CGO_ENABLED=1
+          - CC=mipsel-linux-gnu-gcc
+      - goos: linux
+        goarch: mips64le
+        gomips: hardfloat
+        env:
+          - CGO_ENABLED=1
+          - CC=mips64el-linux-gnuabi64-gcc
+      - goos: windows
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CC=x86_64-w64-mingw32-gcc
+      - goos: windows
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
+          - CC=/llvm-mingw/bin/aarch64-w64-mingw32-gcc
+      - goos: darwin
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CC=o64-clang
+      - goos: darwin
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
+          - CC=oa64-clang
+
+  -
+    id: alpine
+    binary: netclient
+    env:
+      - CGO_ENABLED=1
+    ldflags:
+      - -s -w
+    targets:
+      - linux_amd64
+    overrides:
+      - goos: linux
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CC=musl-gcc
 
 archives:
-  - format: binary
+  - id: default
+    builds: [headless]
+    format: binary
     name_template: '{{ .Binary }}-{{ .Os }}-{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ with .Mips }}-{{ . }}{{ end }}'
+  - id: alpine
+    builds: [alpine]
+    format: binary
+    name_template: '{{ .Binary }}-alpine-{{ .Arch }}'
 release:
   prerelease: true

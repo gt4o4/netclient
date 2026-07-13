@@ -13,39 +13,26 @@ on:
         default: 'v0.0.0'
 
 jobs:
-  build:
-    name: Build
-    runs-on: ${{ matrix.os }}
+  build-linux:
+    name: Build Linux
+    runs-on: arc-runner-set
+    container: buildpack-deps:noble
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-            goos: linux
+          - goos: linux
             goarch: amd64
-          - os: ubuntu-latest
-            goos: linux
+          - goos: linux
             goarch: arm64
-          - os: ubuntu-latest
-            goos: linux
+          - goos: linux
             goarch: arm
             goarm: 5
-          - os: ubuntu-latest
-            goos: linux
+          - goos: linux
             goarch: arm
             goarm: 6
-          - os: ubuntu-latest
-            goos: linux
+          - goos: linux
             goarch: arm
             goarm: 7
-          - os: windows-latest
-            goos: windows
-            goarch: amd64
-          - os: macos-latest
-            goos: darwin
-            goarch: amd64
-          - os: macos-latest
-            goos: darwin
-            goarch: arm64
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
@@ -75,6 +62,57 @@ jobs:
           OUTPUT_NAME="netclient-${{ matrix.goos }}-${{ matrix.goarch }}"
           ARTIFACT_NAME="netclient-${{ matrix.goos }}-${{ matrix.goarch }}"
         fi
+        echo "OUTPUT_NAME=$OUTPUT_NAME" >> $GITHUB_OUTPUT
+        echo "ARTIFACT_NAME=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+        go build -v -ldflags "-X main.version=${{ github.event.inputs.version }}" -o "$OUTPUT_NAME" .
+
+    - name: List built binary
+      run: ls -l netclient-*
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: ${{ steps.build.outputs.ARTIFACT_NAME }}
+        path: ${{ steps.build.outputs.OUTPUT_NAME }}
+
+  build-other:
+    name: Build Non-Linux
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.inputs.branch }}
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Build
+      id: build
+      shell: bash
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 0
+      run: |
+        go version
+        go mod tidy
+        OUTPUT_NAME="netclient-${{ matrix.goos }}-${{ matrix.goarch }}"
+        ARTIFACT_NAME="netclient-${{ matrix.goos }}-${{ matrix.goarch }}"
         if [ "${{ matrix.goos }}" = "windows" ]; then
           OUTPUT_NAME="${OUTPUT_NAME}.exe"
         fi
@@ -91,17 +129,18 @@ jobs:
       run: Get-ChildItem netclient-*
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ steps.build.outputs.ARTIFACT_NAME }}
         path: ${{ steps.build.outputs.OUTPUT_NAME }}
 
   upload:
-    needs: build
-    runs-on: ubuntu-latest
+    needs: [build-linux, build-other]
+    runs-on: arc-runner-set
+    container: buildpack-deps:noble
     steps:
     - name: Download all artifacts
-      uses: actions/download-artifact@v7
+      uses: actions/download-artifact@v8
 
     - name: Display structure of downloaded files
       run: ls -R
@@ -130,7 +169,7 @@ jobs:
       run: |
         ssh root@fileserver.clustercat.com "mkdir -p $UPLOAD_PATH_VERSION"
 
-        find . -type f -name "netclient-*" -exec scp {} root@fileserver.clustercat.com:$UPLOAD_PATH_VERSION/ \;        
+        find . -type f -name "netclient-*" -exec scp {} root@fileserver.clustercat.com:$UPLOAD_PATH_VERSION/ \;
 
     - name: Upload to DigitalOcean Spaces
       env:

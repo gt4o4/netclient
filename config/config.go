@@ -18,6 +18,7 @@ import (
 	"github.com/gravitl/netclient/ncutils"
 	"github.com/gravitl/netmaker/logger"
 	"github.com/gravitl/netmaker/models"
+	"github.com/gravitl/netmaker/schema"
 	"github.com/sasha-s/go-deadlock"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -85,7 +86,7 @@ var (
 
 // Config configuration for netclient and host as a whole
 type Config struct {
-	models.Host
+	schema.Host
 	PrivateKey        wgtypes.Key          `json:"privatekey" yaml:"privatekey"`
 	TrafficKeyPrivate []byte               `json:"traffickeyprivate" yaml:"traffickeyprivate"`
 	HostPeers         []wgtypes.PeerConfig `json:"-" yaml:"-"`
@@ -98,6 +99,7 @@ type Config struct {
 	NameServers    []string `json:"name_servers" yaml:"name_servers"`
 	DNSSearch      string   `json:"dns_search" yaml:"dns_search"`
 	DNSOptions     string   `json:"dns_options" yaml:"dns_options"`
+	FwMark         int      `json:"fwmark" yaml:"fwmark"`
 }
 
 func init() {
@@ -117,7 +119,7 @@ func UpdateNetclient(c Config) {
 	netclient = c
 }
 
-func UpdateHost(host *models.Host) (resetInterface, restart, sendHostUpdate bool) {
+func UpdateHost(host *schema.Host) (resetInterface, restart, sendHostUpdate bool) {
 	hostCfg := Netclient()
 	if hostCfg == nil || host == nil {
 		return
@@ -172,6 +174,7 @@ func UpdateHost(host *models.Host) (resetInterface, restart, sendHostUpdate bool
 		resetInterface = true
 	}
 	// do not update fields that should not be changed by server
+	host.Interface = hostCfg.Interface
 	host.OS = hostCfg.OS
 	host.OSFamily = hostCfg.OSFamily
 	host.OSVersion = hostCfg.OSVersion

@@ -19,6 +19,8 @@ const (
 	IPv6Network = "::/0"
 )
 
+var ErrPeerNotFound = fmt.Errorf("peer not found")
+
 // ShouldReplace - checks curr peers and incoming peers to see if the peers should be replaced
 func ShouldReplace(incomingPeers []wgtypes.PeerConfig) bool {
 	hostPeers := config.Netclient().HostPeers
@@ -69,6 +71,8 @@ func SetPeers(replace bool) error {
 		}
 
 	}
+	// append extra allowed IPs from config file
+	applyExtraAllowedIPs(peers)
 
 	GetInterface().Config.Peers = peers
 	// on freebsd, calling wgcltl.Client.ConfigureDevice() with []Peers{} causes an ioctl error --> ioctl: bad address
@@ -182,7 +186,7 @@ func GetPeer(ifaceName, peerPubKey string) (wgtypes.Peer, error) {
 			return peer, nil
 		}
 	}
-	return wgtypes.Peer{}, fmt.Errorf("peer not found")
+	return wgtypes.Peer{}, ErrPeerNotFound
 }
 
 // GetOriginalDefaulGw - fetches system's original default gw

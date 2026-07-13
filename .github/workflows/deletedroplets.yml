@@ -1,10 +1,12 @@
-name: Delete Droplets
+name: Delete Droplets (disabled - requires gravitl infra)
 
 on:
-  workflow_run:
-    workflows: [Deploy and Test Branch]
-    types:
-      - completed
+  workflow_dispatch:
+  # Disabled: originally triggered on workflow_run of Deploy and Test Branch
+  # workflow_run:
+  #   workflows: [Deploy and Test Branch]
+  #   types:
+  #     - completed
 
 jobs:
   on-success:
@@ -12,7 +14,7 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: get logs
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v18
         with:
           run_id: ${{ github.event.workflow_run.id}}
           if_no_artifact_found: warn
@@ -60,7 +62,7 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'failure' }}
     steps:
       - name: get logs
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v18
         with:
           run_id: ${{ github.event.workflow_run.id}}
           if_no_artifact_found: warn

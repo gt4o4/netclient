@@ -18,6 +18,7 @@ import (
 	"github.com/gravitl/netclient/wireguard"
 	"github.com/gravitl/netmaker/logger"
 	"github.com/gravitl/netmaker/logic"
+	"github.com/gravitl/netmaker/schema"
 	"github.com/gravitl/netmaker/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -72,6 +73,7 @@ func initConfig() {
 	if runtime.GOOS == "darwin" {
 		nc.Name = "utun70"
 	}
+	nc.IsTestIface = true
 	if err := nc.Create(); err != nil {
 		slog.Error("failed to create interface, is wireguard installed?", "error", err)
 		os.Exit(1)
@@ -367,7 +369,9 @@ func checkConfig() {
 		if err != nil {
 			logger.FatalLog("failed to generate wg key", err.Error())
 		}
-		netclient.PublicKey = netclient.PrivateKey.PublicKey()
+		netclient.PublicKey = schema.WgKey{
+			Key: netclient.PrivateKey.PublicKey(),
+		}
 		saveRequired = true
 	}
 	if netclient.Interface == "" {

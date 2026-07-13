@@ -727,7 +727,10 @@ func routeListAll(link netlink.Link) ([]netlink.Route, error) {
 	if err4 != nil {
 		return nil, err4
 	}
-	v6, _ := netlink.RouteList(link, netlink.FAMILY_V6)
+	v6, err6 := netlink.RouteList(link, netlink.FAMILY_V6)
+	if err6 != nil && !errors.Is(err6, unix.EAFNOSUPPORT) {
+		return nil, err6
+	}
 	return append(v4, v6...), nil
 }
 
@@ -745,7 +748,10 @@ func routeListFilteredAll(filter *netlink.Route, filterMask uint64) ([]netlink.R
 	if err4 != nil {
 		return nil, err4
 	}
-	v6, _ := netlink.RouteListFiltered(netlink.FAMILY_V6, filter, filterMask)
+	v6, err6 := netlink.RouteListFiltered(netlink.FAMILY_V6, filter, filterMask)
+	if err6 != nil && !errors.Is(err6, unix.EAFNOSUPPORT) {
+		return nil, err6
+	}
 	return append(v4, v6...), nil
 }
 
