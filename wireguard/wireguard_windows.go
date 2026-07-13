@@ -1,10 +1,13 @@
 package wireguard
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/netip"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -23,6 +26,11 @@ import (
 func (nc *NCIface) Create() error {
 	wgMutex.Lock()
 	defer wgMutex.Unlock()
+
+	var ifaceMetric uint32
+	if !nc.IsTestIface {
+		ifaceMetric, _ = getResolvingInterfaceMetric()
+	}
 
 	adapter, err := driver.OpenAdapter(nc.Name)
 	if err != nil {
@@ -64,7 +72,19 @@ func (nc *NCIface) Create() error {
 
 	slog.Info("created Windows tunnel")
 	nc.Iface = adapter
-	return adapter.SetAdapterState(driver.AdapterStateUp)
+	err = adapter.SetAdapterState(driver.AdapterStateUp)
+	if err != nil {
+		return err
+	}
+
+	if ifaceMetric != 0 {
+		_, err = runPSCommand(fmt.Sprintf("Set-NetIPInterface -InterfaceAlias '%s' -InterfaceMetric %d", psEscapeSingleQuoted(nc.Name), ifaceMetric+1))
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // NCIface.ApplyAddrs - applies addresses to windows tunnel ifaces, unused currently
@@ -557,4 +577,74 @@ func DeleteOldInterface(iface string) {
 func isEconnRefused(err error) bool {
 	var winerrno windows.Errno
 	return errors.As(err, &winerrno) && errors.Is(winerrno, windows.WSAECONNREFUSED)
+}
+
+func getResolvingInterfaceMetric() (uint32, error) {
+	testDomain := "netmaker.io"
+
+	output, err := runPSCommand("Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object InterfaceIndex, ServerAddresses | ConvertTo-Json")
+	if err != nil {
+		return 0, err
+	}
+
+	type dnsEntry struct {
+		InterfaceIndex  int      `json:"InterfaceIndex"`
+		ServerAddresses []string `json:"ServerAddresses"`
+	}
+
+	var entries []dnsEntry
+	raw := []byte(strings.TrimSpace(output))
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		// ConvertTo-Json emits a bare object (not a one-element array) when
+		// the pipeline yields a single result.
+		var entry dnsEntry
+		if err2 := json.Unmarshal(raw, &entry); err2 != nil {
+			return 0, err
+		}
+		entries = append(entries, entry)
+	}
+
+	var lowest uint32 = math.MaxUint32
+	for _, entry := range entries {
+		for _, dnsServer := range entry.ServerAddresses {
+			resolveOut, err := runPSCommand(fmt.Sprintf(
+				"Resolve-DnsName '%s' -Server '%s' -Type A -ErrorAction SilentlyContinue",
+				testDomain, psEscapeSingleQuoted(dnsServer)))
+			if err == nil && strings.Contains(resolveOut, testDomain) {
+				metricOut, err := runPSCommand(fmt.Sprintf(
+					"(Get-NetIPInterface -InterfaceIndex %d -AddressFamily IPv4).InterfaceMetric",
+					entry.InterfaceIndex))
+				if err != nil {
+					return 0, err
+				}
+
+				metric, err := strconv.ParseUint(strings.TrimSpace(metricOut), 10, 32)
+				if err != nil {
+					return 0, err
+				}
+
+				if lowest > uint32(metric) {
+					lowest = uint32(metric)
+				}
+			}
+		}
+	}
+
+	if lowest == math.MaxUint32 {
+		return 0, fmt.Errorf("no interface found that could resolve %s", testDomain)
+	}
+
+	return lowest, nil
+}
+
+// psEscapeSingleQuoted escapes a value for interpolation inside a
+// single-quoted PowerShell string ('' is the escape for a literal ').
+func psEscapeSingleQuoted(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+func runPSCommand(command string) (string, error) {
+	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command)
+	out, err := cmd.Output()
+	return string(out), err
 }
