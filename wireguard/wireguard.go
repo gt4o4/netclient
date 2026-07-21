@@ -71,8 +71,9 @@ func SetPeers(replace bool) error {
 		}
 
 	}
-	// append extra allowed IPs from config file
-	applyExtraAllowedIPs(peers)
+	// append extra allowed IPs from config file (and create endpoint-less
+	// peers for config pubkeys not already present)
+	peers = applyExtraAllowedIPs(peers)
 
 	GetInterface().Config.Peers = peers
 	// on freebsd, calling wgcltl.Client.ConfigureDevice() with []Peers{} causes an ioctl error --> ioctl: bad address

@@ -121,22 +121,53 @@ func AppendExtraEgressRoutes(routes []models.EgressNetworkRoutes) []models.Egres
 	return routes
 }
 
-// applyExtraAllowedIPs appends extra AllowedIPs from config to matching peers
-func applyExtraAllowedIPs(peers []wgtypes.PeerConfig) {
+// applyExtraAllowedIPs appends extra AllowedIPs from config to matching peers,
+// and — for a config public_key that is NOT already a peer — CREATES a new
+// endpoint-less (responder-only) peer carrying those AllowedIPs. A created
+// peer is part of the same ConfigureDevice(ReplacePeers) call, so it is
+// re-asserted on every sync and survives the full-replace rebuild; it is not
+// in config.Netclient().HostPeers, so ShouldReplace is unaffected. Used to
+// admit the cnix-cn hubs' Surface B tunnels onto a relay's zth0 (the hub
+// initiates via a Cloudflare transit; we learn its endpoint from the
+// handshake). Returns the (possibly grown) peer slice.
+func applyExtraAllowedIPs(peers []wgtypes.PeerConfig) []wgtypes.PeerConfig {
 	extraIPs := loadExtraAllowedIPs()
 	if len(extraIPs) == 0 {
-		return
+		return peers
 	}
+	matched := make(map[string]bool, len(extraIPs))
 	for i := range peers {
 		if peers[i].Remove {
 			continue
 		}
-		extra, ok := extraIPs[peers[i].PublicKey.String()]
+		pk := peers[i].PublicKey.String()
+		extra, ok := extraIPs[pk]
 		if !ok {
 			continue
 		}
+		matched[pk] = true
 		peers[i].AllowedIPs = append(peers[i].AllowedIPs, extra...)
 		peers[i].AllowedIPs = logic.UniqueIPNetList(peers[i].AllowedIPs)
-		slog.Debug("applied extra allowed IPs to peer", "peer", peers[i].PublicKey.String(), "count", len(extra))
+		slog.Debug("applied extra allowed IPs to peer", "peer", pk, "count", len(extra))
 	}
+	// A config public_key that matched no existing peer becomes a new
+	// endpoint-less peer (responder-only; endpoint learned from the handshake).
+	for pk, nets := range extraIPs {
+		if matched[pk] {
+			continue
+		}
+		key, err := wgtypes.ParseKey(pk)
+		if err != nil {
+			slog.Warn("failed to parse extra peer public key", "key", pk, "error", err)
+			continue
+		}
+		peers = append(peers, wgtypes.PeerConfig{
+			PublicKey:         key,
+			ReplaceAllowedIPs: true,
+			AllowedIPs:        logic.UniqueIPNetList(nets),
+			// Endpoint left nil → responder-only.
+		})
+		slog.Debug("created endpoint-less extra peer", "peer", pk, "count", len(nets))
+	}
+	return peers
 }
