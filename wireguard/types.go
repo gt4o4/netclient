@@ -68,7 +68,12 @@ func NewNCIface(host *config.Config, nodes config.NodeMap) *NCIface {
 			FirewallMark: &firewallMark,
 			ListenPort:   &host.ListenPort,
 			ReplacePeers: true,
-			Peers:        cleanUpPeers(peers),
+			// applyExtraAllowedIPs here too, not just in SetPeers: several
+			// paths call Configure() WITHOUT a following SetPeers (notably the
+			// node ifaceDelta / NODE_FORCE_UPDATE handler), which would
+			// otherwise leave the kernel holding the server's endpoints until
+			// the server happens to push a peer update. Idempotent.
+			Peers: applyExtraAllowedIPs(cleanUpPeers(peers)),
 		},
 	}
 	return &netmaker

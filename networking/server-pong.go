@@ -87,6 +87,16 @@ func storeNewPeerIface(peerPubKey string, endpoint *net.UDPAddr) error {
 
 func SetPeerEndpoint(peerPubKey string, value cache.EndpointCacheValue) error {
 
+	// A locally pinned endpoint outranks endpoint detection. Without this the
+	// detection ticker would fight the pin every interval (the pin never equals
+	// the detected address, so the "changed" test is permanently true), and
+	// since the update below sets ReplaceAllowedIPs it would also drop any
+	// extra AllowedIPs the same config injected.
+	if pinned, ok := wireguard.PinnedEndpoint(peerPubKey); ok {
+		logger.Log(1, "ignoring detected endpoint for pinned peer", peerPubKey, "- keeping", pinned.String())
+		return nil
+	}
+
 	currentServerPeers := config.Netclient().HostPeers
 	for i := range currentServerPeers {
 		currPeer := currentServerPeers[i]

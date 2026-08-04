@@ -3,6 +3,7 @@ package wireguard
 import (
 	"encoding/json"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,10 +17,20 @@ import (
 
 const extraAllowedIPsFile = "peers_extra_ips.json"
 
-// ExtraPeerConfig defines extra AllowedIPs for a peer identified by public key
+// ExtraPeerConfig defines local overrides for a peer identified by public key:
+// extra AllowedIPs and/or a pinned Endpoint.
+//
+// Endpoint pins the peer's WireGuard endpoint to a literal ip:port, overriding
+// whatever the server advertises. netmaker's `endpointip` is a HOST-level field,
+// so it cannot express "this peer is reachable at a different address from
+// here" — which is exactly what a client behind a censored path needs when the
+// peer's real address is blocked but a proxy/CDN front-door for it is not.
+// The equivalent already exists for the control plane (`mptcp_endpoints`,
+// ncutils/mptcp_dialer.go); this is its data-plane counterpart.
 type ExtraPeerConfig struct {
 	PublicKey  string `json:"public_key"`
 	AllowedIPs string `json:"allowed_ips"`
+	Endpoint   string `json:"endpoint,omitempty"`
 }
 
 // ExtraRouteConfig defines an extra route to add to the WG interface
@@ -37,9 +48,15 @@ type ExtraAllowedIPsConfig struct {
 	Routes          []ExtraRouteConfig `json:"routes"`
 }
 
+// extraConfigPath resolves the config file location. It is a var so tests can
+// point it at a temp dir; production always uses the netclient config path.
+var extraConfigPath = func() string {
+	return filepath.Join(config.GetNetclientPath(), extraAllowedIPsFile)
+}
+
 // loadExtraConfig reads and parses the config file
 func loadExtraConfig() *ExtraAllowedIPsConfig {
-	path := filepath.Join(config.GetNetclientPath(), extraAllowedIPsFile)
+	path := extraConfigPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -55,17 +72,25 @@ func loadExtraConfig() *ExtraAllowedIPsConfig {
 	return &cfg
 }
 
-// loadExtraAllowedIPs reads the config file and returns a map of public key -> []net.IPNet
-func loadExtraAllowedIPs() map[string][]net.IPNet {
+// extraPeer is the parsed form of one ExtraPeerConfig entry.
+type extraPeer struct {
+	nets     []net.IPNet
+	endpoint *net.UDPAddr // nil = no override; leave the server's endpoint alone
+}
+
+// loadExtraPeers reads the config file and returns a map of public key ->
+// extraPeer.  An entry is kept when it carries EITHER extra AllowedIPs or an
+// endpoint override, so an endpoint-only entry (the common case for pinning a
+// peer to a front-door address) survives.
+func loadExtraPeers() map[string]extraPeer {
 	cfg := loadExtraConfig()
 	if cfg == nil {
 		return nil
 	}
-	result := make(map[string][]net.IPNet, len(cfg.Peers))
+	result := make(map[string]extraPeer, len(cfg.Peers))
 	for _, p := range cfg.Peers {
-		cidrs := strings.Split(p.AllowedIPs, ",")
-		var nets []net.IPNet
-		for _, cidr := range cidrs {
+		var e extraPeer
+		for _, cidr := range strings.Split(p.AllowedIPs, ",") {
 			cidr = strings.TrimSpace(cidr)
 			if cidr == "" {
 				continue
@@ -75,13 +100,37 @@ func loadExtraAllowedIPs() map[string][]net.IPNet {
 				slog.Warn("failed to parse CIDR in extra allowed IPs", "cidr", cidr, "error", err)
 				continue
 			}
-			nets = append(nets, *ipnet)
+			e.nets = append(e.nets, *ipnet)
 		}
-		if len(nets) > 0 {
-			result[p.PublicKey] = nets
+		if ep := strings.TrimSpace(p.Endpoint); ep != "" {
+			// Deliberately NOT net.ResolveUDPAddr: it performs DNS, and this
+			// runs while holding wgMutex on a host whose resolver may itself
+			// sit behind the tunnel being configured.  Literals only.
+			if ap, err := netip.ParseAddrPort(ep); err == nil {
+				e.endpoint = net.UDPAddrFromAddrPort(ap)
+			} else {
+				// Leave the server's endpoint intact rather than nil-ing it:
+				// a nil endpoint silently demotes an initiator to
+				// responder-only, which blackholes with no further signal.
+				slog.Warn("ignoring unparseable endpoint override (want literal ip:port)",
+					"peer", p.PublicKey, "endpoint", ep, "error", err)
+			}
+		}
+		if len(e.nets) > 0 || e.endpoint != nil {
+			result[p.PublicKey] = e
 		}
 	}
 	return result
+}
+
+// PinnedEndpoint reports whether the given peer has a locally pinned endpoint.
+// Callers that discover endpoints dynamically must not override a pin.
+func PinnedEndpoint(pubKey string) (*net.UDPAddr, bool) {
+	e, ok := loadExtraPeers()[pubKey]
+	if !ok || e.endpoint == nil {
+		return nil, false
+	}
+	return e.endpoint, true
 }
 
 // AppendExtraEgressRoutes appends extra routes from config as synthetic egress routes
@@ -131,29 +180,45 @@ func AppendExtraEgressRoutes(routes []models.EgressNetworkRoutes) []models.Egres
 // initiates via a Cloudflare transit; we learn its endpoint from the
 // handshake). Returns the (possibly grown) peer slice.
 func applyExtraAllowedIPs(peers []wgtypes.PeerConfig) []wgtypes.PeerConfig {
-	extraIPs := loadExtraAllowedIPs()
-	if len(extraIPs) == 0 {
+	extra := loadExtraPeers()
+	if len(extra) == 0 {
 		return peers
 	}
-	matched := make(map[string]bool, len(extraIPs))
+	matched := make(map[string]bool, len(extra))
 	for i := range peers {
-		if peers[i].Remove {
-			continue
-		}
 		pk := peers[i].PublicKey.String()
-		extra, ok := extraIPs[pk]
+		e, ok := extra[pk]
 		if !ok {
 			continue
 		}
+		// Mark BEFORE the Remove check: a peer the server is deleting must not
+		// be re-created by the loop below in the same ConfigureDevice call.
 		matched[pk] = true
-		peers[i].AllowedIPs = append(peers[i].AllowedIPs, extra...)
-		peers[i].AllowedIPs = logic.UniqueIPNetList(peers[i].AllowedIPs)
-		slog.Debug("applied extra allowed IPs to peer", "peer", pk, "count", len(extra))
+		if peers[i].Remove {
+			continue
+		}
+		if len(e.nets) > 0 {
+			peers[i].AllowedIPs = append(peers[i].AllowedIPs, e.nets...)
+			peers[i].AllowedIPs = logic.UniqueIPNetList(peers[i].AllowedIPs)
+			slog.Debug("applied extra allowed IPs to peer", "peer", pk, "count", len(e.nets))
+		}
+		if e.endpoint != nil {
+			peers[i].Endpoint = e.endpoint
+			slog.Info("pinned peer endpoint from local config", "peer", pk, "endpoint", e.endpoint.String())
+		}
 	}
-	// A config public_key that matched no existing peer becomes a new
-	// endpoint-less peer (responder-only; endpoint learned from the handshake).
-	for pk, nets := range extraIPs {
+	// A config public_key that matched no existing peer becomes a new peer.
+	// It is part of the same ConfigureDevice(ReplacePeers) call, so it is
+	// re-asserted on every sync; it is not in config.Netclient().HostPeers, so
+	// ShouldReplace is unaffected.
+	for pk, e := range extra {
 		if matched[pk] {
+			continue
+		}
+		// Creating a peer with no AllowedIPs would be inert (WireGuard would
+		// route nothing to it) — and HostPeers is empty until the first
+		// successful Pull, so an endpoint-only entry must not manufacture one.
+		if len(e.nets) == 0 {
 			continue
 		}
 		key, err := wgtypes.ParseKey(pk)
@@ -161,13 +226,17 @@ func applyExtraAllowedIPs(peers []wgtypes.PeerConfig) []wgtypes.PeerConfig {
 			slog.Warn("failed to parse extra peer public key", "key", pk, "error", err)
 			continue
 		}
-		peers = append(peers, wgtypes.PeerConfig{
+		p := wgtypes.PeerConfig{
 			PublicKey:         key,
 			ReplaceAllowedIPs: true,
-			AllowedIPs:        logic.UniqueIPNetList(nets),
-			// Endpoint left nil → responder-only.
-		})
-		slog.Debug("created endpoint-less extra peer", "peer", pk, "count", len(nets))
+			AllowedIPs:        logic.UniqueIPNetList(e.nets),
+			// Endpoint nil unless pinned → responder-only, learned from the handshake.
+		}
+		if e.endpoint != nil {
+			p.Endpoint = e.endpoint
+		}
+		peers = append(peers, p)
+		slog.Info("created extra peer", "peer", pk, "count", len(e.nets), "pinned", e.endpoint != nil)
 	}
 	return peers
 }
